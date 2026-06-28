@@ -4,18 +4,54 @@ from typing import Optional
 
 from .models import ReceiptData, file_name
 
+
 DATE_PATTERNS = [
-    r"\b(\d{2}[./-]\d{2}[./-]\d{4})\b",
     r"\b(\d{4}[./-]\d{2}[./-]\d{2})\b",
+    r"\b(\d{2}[./-]\d{2}[./-]\d{4})\b",
     r"\b(\d{2}[./-]\d{2}[./-]\d{2})\b",
 ]
 
 TOTAL_KEYWORDS = [
-    "total", "summe", "betrag", "gesamt", "zu zahlen", "amount", "balance due",
-    "всего", "итого", "к оплате", "сумма", "razem", "gesamtbetrag"
+    "total",
+    "amount due",
+    "balance due",
+    "grand total",
+    "summe",
+    "gesamt",
+    "gesamtbetrag",
+    "endbetrag",
+    "bruttobetrag",
+    "rechnungsbetrag",
+    "zahlbetrag",
+    "zu zahlen",
+    "betrag",
+    "всего",
+    "итого",
+    "к оплате",
+    "сумма",
+    "razem",
 ]
 
-VAT_KEYWORDS = ["vat", "mwst", "ust", "tax", "ндс", "mehrwertsteuer"]
+VAT_KEYWORDS = [
+    "vat",
+    "tax",
+    "mwst",
+    "mws t",
+    "ust",
+    "umsatzsteuer",
+    "mehrwertsteuer",
+    "ндс",
+]
+
+VENDOR_SKIP_WORDS = {
+    "rechnung",
+    "invoice",
+    "receipt",
+    "kassenbon",
+    "quittung",
+    "tax invoice",
+    "beleg",
+}
 
 CURRENCY_PATTERNS = [
     ("EUR", r"€|\bEUR\b"),
@@ -24,10 +60,15 @@ CURRENCY_PATTERNS = [
     ("RUB", r"\bRUB\b|₽|руб"),
 ]
 
-AMOUNT_RE = re.compile(r"(?<!\d)(\d{1,3}(?:[ .]\d{3})*[,.]\d{2}|\d+[,.]\d{2})(?!\d)")
+AMOUNT_RE = re.compile(
+    r"(?<![\dA-Za-z])"
+    r"(?:\d{1,3}(?:[.\s]\d{3})+|\d+)"
+    r"(?:[,.]\d{2})"
+    r"(?![\dA-Za-z])"
+)
 
 
-def parse_receipt_text(text: str, source_path: str | Path = "") -> ReceiptData:
+def parse_receipt_text(text: str, source_path: str | Path | None = None) -> ReceiptData:
     normalized = _normalize_text(text)
     lines = [line.strip() for line in normalized.splitlines() if line.strip()]
 
@@ -44,21 +85,64 @@ def parse_receipt_text(text: str, source_path: str | Path = "") -> ReceiptData:
 
 def _normalize_text(text: str) -> str:
     text = text.replace("\u00a0", " ")
+    text = text.replace("€", " € ")
     text = re.sub(r"[ \t]+", " ", text)
     return text
 
 
 def _guess_vendor(lines: list[str]) -> Optional[str]:
-    skip_words = {"rechnung", "invoice", "receipt", "kassenbon", "tax invoice", "quittung"}
-    for line in lines[:10]:
+    vendor_label_patterns = [
+        r"\bdatum\b",
+        r"\bdate\b",
+        r"\btotal\b",
+        r"\bsumme\b",
+        r"\bgesamt\b",
+        r"\bmwst\b",
+        r"\bust\b",
+        r"\bumsatzsteuer\b",
+        r"\bmehrwertsteuer\b",
+    ]
+
+    for line in lines[:12]:
         clean = re.sub(r"[^\w\s&.,'-]", "", line).strip()
+
         if len(clean) < 3:
             continue
-        if clean.lower() in skip_words:
+
+        lower = clean.lower()
+
+        if lower in VENDOR_SKIP_WORDS:
             continue
+
+        if any(re.search(pattern, lower) for pattern in vendor_label_patterns):
+            continue
+
         if AMOUNT_RE.search(clean):
             continue
+
         return clean[:120]
+
+    return None
+
+    for line in lines[:12]:
+        clean = re.sub(r"[^\w\s&.,'-]", "", line).strip()
+
+        if len(clean) < 3:
+            continue
+
+        lower = clean.lower()
+
+        if lower in VENDOR_SKIP_WORDS:
+            continue
+
+        if any(word in lower for word in ["datum", "date", "total", "summe", "gesamt", "mwst", "ust"]):
+            continue
+
+        if AMOUNT_RE.search(clean):
+            continue
+
+        return clean[:120]
+
     return None
 
 
@@ -67,6 +151,7 @@ def _extract_date(text: str) -> Optional[str]:
         match = re.search(pattern, text)
         if match:
             return match.group(1)
+
     return None
 
 
@@ -74,47 +159,85 @@ def _extract_currency(text: str) -> Optional[str]:
     for code, pattern in CURRENCY_PATTERNS:
         if re.search(pattern, text, flags=re.IGNORECASE):
             return code
+
     return None
 
 
 def _extract_total(lines: list[str]) -> Optional[float]:
-    candidates: list[float] = []
-    keyword_candidates: list[float] = []
+    all_amounts: list[float] = []
+    keyword_amounts: list[float] = []
 
     for line in lines:
-        amounts = [_to_float(value) for value in AMOUNT_RE.findall(line)]
-        amounts = [value for value in amounts if value is not None]
+        amounts = _extract_amounts_from_line(line)
+
         if not amounts:
             continue
-        candidates.extend(amounts)
-        if any(keyword in line.lower() for keyword in TOTAL_KEYWORDS):
-            keyword_candidates.extend(amounts)
 
-    if keyword_candidates:
-        return max(keyword_candidates)
-    if candidates:
-        return max(candidates)
+        all_amounts.extend(amounts)
+
+        lower = line.lower()
+
+        if any(keyword in lower for keyword in TOTAL_KEYWORDS):
+            keyword_amounts.extend(amounts)
+
+    if keyword_amounts:
+        return max(keyword_amounts)
+
+    if all_amounts:
+        return max(all_amounts)
+
     return None
 
 
 def _extract_vat(lines: list[str]) -> Optional[float]:
-    vat_values: list[float] = []
+    vat_amounts: list[float] = []
+
     for line in lines:
-        if any(keyword in line.lower() for keyword in VAT_KEYWORDS):
-            vat_values.extend(value for value in (_to_float(v) for v in AMOUNT_RE.findall(line)) if value is not None)
-    return max(vat_values) if vat_values else None
+        lower = line.lower()
+
+        if any(keyword in lower for keyword in VAT_KEYWORDS):
+            vat_amounts.extend(_extract_amounts_from_line(line))
+
+    if vat_amounts:
+        return max(vat_amounts)
+
+    return None
+
+
+def _extract_amounts_from_line(line: str) -> list[float]:
+    clean_line = _remove_dates_and_percentages(line)
+
+    values = []
+    for value in AMOUNT_RE.findall(clean_line):
+        number = _to_float(value)
+        if number is not None:
+            values.append(number)
+
+    return values
+
+
+def _remove_dates_and_percentages(line: str) -> str:
+    clean_line = line
+
+    for pattern in DATE_PATTERNS:
+        clean_line = re.sub(pattern, " ", clean_line)
+
+    clean_line = re.sub(r"\b\d{1,2}\s?%\b", " ", clean_line)
+
+    return clean_line
 
 
 def _to_float(value: str) -> Optional[float]:
     value = value.strip().replace(" ", "")
-    # 1.234,56 -> 1234.56; 1,234.56 -> 1234.56
+
     if "," in value and "." in value:
         if value.rfind(",") > value.rfind("."):
             value = value.replace(".", "").replace(",", ".")
         else:
             value = value.replace(",", "")
-    else:
+    elif "," in value:
         value = value.replace(",", ".")
+
     try:
         return round(float(value), 2)
     except ValueError:
