@@ -1,23 +1,32 @@
-from pathlib import Path
-from typing import Iterable
+from io import BytesIO
 
 import pandas as pd
 
-from .models import ReceiptData
+
+def export_to_csv_bytes(data: list[dict]) -> bytes:
+    df = pd.DataFrame(data)
+    return df.to_csv(index=False).encode("utf-8")
 
 
-def export_results(receipts: Iterable[ReceiptData], output_path: str | Path) -> Path:
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
+def export_to_excel_bytes(data: list[dict]) -> bytes:
+    output = BytesIO()
+    df = pd.DataFrame(data)
 
-    rows = [receipt.to_dict() for receipt in receipts]
-    df = pd.DataFrame(rows, columns=["file_name", "vendor", "date", "total", "vat", "currency", "raw_text"])
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Receipts")
 
-    if output.suffix.lower() == ".csv":
-        df.to_csv(output, index=False, encoding="utf-8-sig")
-    elif output.suffix.lower() in {".xlsx", ".xls"}:
-        df.to_excel(output, index=False)
-    else:
-        raise ValueError("Output must be .csv or .xlsx")
+        worksheet = writer.sheets["Receipts"]
 
-    return output
+        for column_cells in worksheet.columns:
+            max_length = 0
+            column_letter = column_cells[0].column_letter
+
+            for cell in column_cells:
+                value = cell.value
+                if value is not None:
+                    max_length = max(max_length, len(str(value)))
+
+            worksheet.column_dimensions[column_letter].width = max_length + 2
+
+    output.seek(0)
+    return output.getvalue()

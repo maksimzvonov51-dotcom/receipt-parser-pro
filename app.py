@@ -6,6 +6,7 @@ import streamlit as st
 
 from receipt_parser.parser import parse_receipt_text
 from receipt_parser.text_extractor import extract_text
+from receipt_parser.exporter import export_to_csv_bytes, export_to_excel_bytes
 
 st.set_page_config(page_title="Receipt Parser Pro", page_icon="🧾", layout="wide")
 st.title("Receipt Parser Pro")
@@ -38,13 +39,27 @@ if uploaded_files:
                     "currency": None,
                     "raw_text": f"ERROR: {exc}",
                 })
-
     df = pd.DataFrame(rows)
     st.subheader("Results")
     st.dataframe(df.drop(columns=["raw_text"]), use_container_width=True)
 
-    csv_data = df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("Download CSV", csv_data, "receipts.csv", "text/csv")
+    export_rows = df.drop(columns=["raw_text"]).to_dict(orient="records")
+
+    csv_data = export_to_csv_bytes(export_rows)
+    st.download_button(
+        "Download CSV",
+        csv_data,
+        "receipts.csv",
+        "text/csv",
+    )
+
+    excel_data = export_to_excel_bytes(export_rows)
+    st.download_button(
+        "Download Excel",
+        excel_data,
+        "receipts.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
     st.subheader("Raw OCR text")
     for row in rows:
