@@ -179,7 +179,7 @@ if uploaded_files:
         )
 
     with col_excel:
-        excel_data = export_to_excel_bytes(export_rows)
+        excel_data = export_to_excel_bytes(export_rows, summary)
         st.download_button(
             "Download Excel",
             excel_data,
