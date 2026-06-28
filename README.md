@@ -142,3 +142,5 @@ Paid version:
 ## License
 
 MIT
+## Screenshot
+![Receipt Parser Pro screenshot](assets/screenshot.png)
