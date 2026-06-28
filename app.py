@@ -69,7 +69,7 @@ st.write(
 
 ocr_lang = st.text_input(
     "OCR language",
-    value="eng+deu",
+    value="eng",
     help="Examples: eng, deu, eng+deu. Requires installed Tesseract language packs.",
 )
 
